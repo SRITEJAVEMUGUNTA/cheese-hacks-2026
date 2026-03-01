@@ -1,0 +1,1668 @@
+<!DOCTYPE html>
+<!--
+==========================================================================
+  RESPONDER THREAT MONITOR — Design Spec & Working Prototype
+  Version: 1.0.0
+==========================================================================
+
+  COMPONENT TREE (React-style)
+  ─────────────────────────────────────────────────────────────────────────
+  <App>
+    <TopBar>                              56px sticky, z-index 100
+      <LogoBlock />                       logo mark + title + env tag
+      <ConnectionStatus />                live dot + LIVE label + latency
+      <ActionToolbar>
+        <MarkSafeButton />
+        <EscalateButton />               pulses on high threat
+        <MuteButton />
+        <RecordClipButton />
+        <SettingsButton />
+      </ActionToolbar>
+    </TopBar>
+
+    <AlertBanner />                       shown on high threat, aria-live
+
+    <MainContent>                         flex row, fills viewport
+      <PlayerColumn>                      flex: 0 0 70%
+        <VideoCard>                       flex: 1, dark bg, border-radius 12
+          <CameraCanvas />                simulated feed / real <video>
+          <BoundingBoxLayer />            absolute overlay, toggleable
+          <VideoOverlayTop>
+            <LiveBadge />
+            <Timestamp />
+          </VideoOverlayTop>
+          <PiPMapThumbnail />             120×80, bottom-right
+          <PlayerControlsBar>            bottom overlay
+            <CaptionsToggle />
+            <BoundingBoxToggle />
+            <AudioMeterToggle />
+            <PlayerAudioMeter />          12-bar waveform
+          </PlayerControlsBar>
+          <OfflineOverlay />              conditional, spinner + text
+        </VideoCard>
+        <SceneSummaryStrip />            40px, aria-live="polite"
+      </PlayerColumn>
+
+      <Sidebar>                           flex: 0 0 30%, border-left
+        <ThreatPanel>                     fixed height ~230px
+          <ThreatScoreDisplay />          48px number + level label
+          <ThreatSparkline />             SVG, last 60 data points
+          <ThreatChips />                 3–6 chips
+          <WhyThisDrawer />              collapsible explanation
+        </ThreatPanel>
+
+        <AudioPanel>                      fixed height ~175px
+          <AudioLevelMeter />
+          <TopCuesList />
+          <SpeechCaptionBox />
+        </AudioPanel>
+
+        <EventFeedPanel>                  flex: 1, min-height 0
+          <FeedSearch />
+          <FeedFilterTabs />              [All][Audio][Video][System][User]
+          <FeedList>                      overflow-y scroll, aria-live
+            <FeedItem />                  icon + timestamp + text
+          </FeedList>
+        </EventFeedPanel>
+      </Sidebar>
+    </MainContent>
+
+    <EscalateModal />                     portal, backdrop blur
+  </App>
+
+  LAYOUT MEASUREMENTS
+  ─────────────────────────────────────────────────────────────────────────
+  TopBar:           height 56px, padding 0 16px, gap 16px
+  AlertBanner:      height 30px, padding 6px 16px
+  MainContent:      calc(100vh - 56px), gap 0
+  PlayerColumn:     flex 70%, padding 12px 8px 12px 12px, gap 8px
+  Sidebar:          flex 30%, padding 12px 12px 12px 8px, gap 8px
+  VideoCard:        flex 1, border-radius 12px, overflow hidden
+  SceneSummary:     height 40px, padding 10px 14px
+  ThreatPanel:      flex-shrink 0, ~230px total
+  AudioPanel:       flex-shrink 0, ~175px total
+  EventFeedPanel:   flex 1, min-height 0
+  FeedItem:         padding 5px 14px, gap 8px
+
+  Responsive (≤1024px):
+    PlayerColumn: 100% (stack), sidebar below, max-h 320px
+
+  DESIGN TOKENS
+  ─────────────────────────────────────────────────────────────────────────
+  --bg-base:        #0d0e10   base app background
+  --bg-surface:     #17181c   cards, sidebar, topbar
+  --bg-elevated:    #1f2026   drawers, hover states, inputs
+  --bg-hover:       #262830   active hover
+  --border-subtle:  #2a2b32   default dividers
+  --border-strong:  #3a3b44   prominent dividers
+
+  --text-primary:   #eeeef0   headlines, active labels
+  --text-secondary: #8e909a   body, descriptions
+  --text-muted:     #5a5c69   timestamps, placeholders
+
+  --accent:         #4f8ef7   interactive blue — one accent only
+  --accent-dim:     #1e3a6e   subtle accent bg
+
+  --live:           #22c55e   streaming, low/safe state
+  --elevated:       #f59e0b   amber warning
+  --high:           #ef4444   red alert
+
+  --radius-sm:      4px
+  --radius-md:      8px
+  --radius-lg:      12px
+  --radius-full:    9999px
+
+  --shadow-sm:      0 1px 3px rgba(0,0,0,0.4)
+  --shadow-md:      0 4px 12px rgba(0,0,0,0.5)
+  --shadow-lg:      0 8px 24px rgba(0,0,0,0.6)
+
+  TYPOGRAPHY SCALE
+  ─────────────────────────────────────────────────────────────────────────
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif
+  9px  — chip scores, secondary timestamps
+  10px — feed timestamps, badge micro-labels
+  11px — panel titles (caps), filter tabs, tooltips, UI labels
+  12px — feed items, audio cues, modal body, caption text
+  13px — scene summary, modal descriptions
+  14px — button labels, threat level label, logo title
+  15px — modal title
+  48px — threat score display (tabular-nums, weight 700)
+
+  COPYWRITING
+  ─────────────────────────────────────────────────────────────────────────
+  Mark Safe       "Mark the current scene as safe. Logs an operator note."
+  Escalate        "Escalate incident — requires confirmation."
+  Mute / Unmute   "Mute audio output" / "Unmute audio"
+  Record Clip     "Save last 30 seconds as a clip. Does not interrupt stream."
+  Settings        "Configure alerts, audio thresholds, and display."
+  Why this?       "See what's driving this score in plain language."
+  CC toggle       "Toggle speech captions"
+  Boxes toggle    "Toggle person detection overlay"
+  Meter toggle    "Toggle audio level indicator"
+  Escalate modal  "Escalating notifies dispatch immediately. A false
+                   escalation is logged and reviewed."
+  Feed items      Calm, past-tense, factual. No ALL-CAPS except ESCALATED.
+  Scene summary   One sentence, human-readable, max 80 chars.
+  Offline sub     "Attempting to restore stream feed"
+==========================================================================
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Responder Monitor — Unit 12</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet" />
+  <style>
+    /* ─── DESIGN TOKENS ─────────────────────────────────────────────── */
+    :root {
+      --bg-base:       #0d0e10;
+      --bg-surface:    #17181c;
+      --bg-elevated:   #1f2026;
+      --bg-hover:      #262830;
+      --border-subtle: #2a2b32;
+      --border-strong: #3a3b44;
+
+      --text-primary:  #eeeef0;
+      --text-secondary:#8e909a;
+      --text-muted:    #5a5c69;
+
+      --accent:        #4f8ef7;
+      --accent-dim:    rgba(79,142,247,0.12);
+      --live:          #22c55e;
+      --live-dim:      rgba(34,197,94,0.12);
+      --elevated:      #f59e0b;
+      --elevated-dim:  rgba(245,158,11,0.12);
+      --high:          #ef4444;
+      --high-dim:      rgba(239,68,68,0.10);
+      --safe:          #16a34a;
+
+      --radius-sm:   4px;
+      --radius-md:   8px;
+      --radius-lg:   12px;
+      --radius-full: 9999px;
+
+      --shadow-sm: 0 1px 3px rgba(0,0,0,0.4);
+      --shadow-md: 0 4px 12px rgba(0,0,0,0.5);
+      --shadow-lg: 0 8px 24px rgba(0,0,0,0.6);
+
+      --topbar-h: 56px;
+      --font: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      font-family: var(--font);
+      background: var(--bg-base);
+      color: var(--text-primary);
+      overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body { display: flex; flex-direction: column; }
+
+    /* ─── TOPBAR ─────────────────────────────────────────────────────── */
+    .topbar {
+      height: var(--topbar-h);
+      min-height: var(--topbar-h);
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      gap: 12px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      box-shadow: 0 1px 0 var(--border-subtle);
+    }
+
+    .tb-left  { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+    .tb-center { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    .tb-right  { display: flex; align-items: center; gap: 5px; flex: 1; justify-content: flex-end; }
+
+    /* Logo */
+    .logo-mark {
+      width: 30px; height: 30px;
+      background: var(--accent);
+      border-radius: var(--radius-md);
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .logo-mark svg { width: 16px; height: 16px; fill: #fff; }
+    .logo-copy { display: flex; flex-direction: column; gap: 1px; }
+    .logo-name { font-size: 13px; font-weight: 600; color: var(--text-primary); line-height: 1.1; }
+    .logo-env  { font-size: 10px; color: var(--text-muted); font-weight: 500; line-height: 1.1; }
+
+    /* Connection status */
+    .conn-pill {
+      display: flex; align-items: center; gap: 6px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-full);
+      padding: 4px 10px 4px 8px;
+      user-select: none;
+    }
+    .conn-dot {
+      width: 7px; height: 7px;
+      background: var(--live);
+      border-radius: 50%;
+      flex-shrink: 0;
+      animation: dot-pulse 2s ease-in-out infinite;
+    }
+    .conn-dot.off { background: var(--text-muted); animation: none; }
+    @keyframes dot-pulse {
+      0%,100% { opacity: 1; transform: scale(1); }
+      50%      { opacity: 0.5; transform: scale(0.8); }
+    }
+    .conn-live    { font-size: 11px; font-weight: 700; color: var(--live); letter-spacing: 0.6px; }
+    .conn-live.off { color: var(--text-muted); }
+    .conn-latency { font-size: 11px; color: var(--text-muted); }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 6px 11px;
+      border-radius: var(--radius-md);
+      font-size: 12px; font-weight: 600; font-family: var(--font);
+      cursor: pointer; border: 1px solid transparent;
+      transition: background 0.12s, border-color 0.12s, color 0.12s, box-shadow 0.15s;
+      white-space: nowrap; letter-spacing: 0.1px;
+      text-decoration: none; line-height: 1;
+    }
+    .btn svg { width: 12px; height: 12px; flex-shrink: 0; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .btn-ghost {
+      background: transparent;
+      border-color: var(--border-subtle);
+      color: var(--text-secondary);
+    }
+    .btn-ghost:hover:not(:disabled) { background: var(--bg-elevated); color: var(--text-primary); }
+
+    .btn-safe {
+      background: transparent;
+      border-color: rgba(22,163,74,0.4);
+      color: var(--safe);
+    }
+    .btn-safe:hover:not(:disabled) { background: var(--live-dim); }
+
+    .btn-escalate {
+      background: var(--high);
+      border-color: var(--high);
+      color: #fff;
+    }
+    .btn-escalate:hover:not(:disabled) { background: #dc2626; border-color: #dc2626; }
+    .btn-escalate.pulsing { animation: esc-pulse 1.6s ease-in-out infinite; }
+    @keyframes esc-pulse {
+      0%,100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.35); }
+      50%      { box-shadow: 0 0 0 7px rgba(239,68,68,0); }
+    }
+    .btn-escalate.locked {
+      background: var(--bg-elevated);
+      border-color: var(--border-subtle);
+      color: var(--text-muted);
+      animation: none;
+    }
+
+    /* ─── ALERT BANNER ───────────────────────────────────────────────── */
+    .alert-banner {
+      display: flex; align-items: center; gap: 8px;
+      background: rgba(239,68,68,0.08);
+      border-bottom: 1px solid rgba(239,68,68,0.25);
+      padding: 6px 16px;
+      font-size: 12px; color: #fca5a5; font-weight: 500;
+      animation: slide-down 0.2s ease;
+      flex-shrink: 0;
+    }
+    .alert-banner.hidden { display: none; }
+    @keyframes slide-down {
+      from { transform: translateY(-100%); opacity: 0; }
+      to   { transform: translateY(0);     opacity: 1; }
+    }
+    .alert-dot {
+      width: 6px; height: 6px;
+      background: var(--high); border-radius: 50%;
+      flex-shrink: 0; animation: dot-pulse 1s infinite;
+    }
+    .alert-dismiss {
+      margin-left: auto; background: none; border: none;
+      color: var(--text-muted); cursor: pointer; font-size: 13px;
+      line-height: 1; padding: 2px 4px; border-radius: 4px;
+      font-family: var(--font);
+    }
+    .alert-dismiss:hover { color: var(--text-secondary); }
+
+    /* ─── MAIN CONTENT ───────────────────────────────────────────────── */
+    .main {
+      display: flex; flex: 1; overflow: hidden;
+    }
+
+    /* ─── PLAYER COLUMN ──────────────────────────────────────────────── */
+    .player-col {
+      flex: 0 0 70%;
+      display: flex; flex-direction: column;
+      padding: 10px 6px 10px 10px;
+      gap: 8px; overflow: hidden;
+    }
+
+    /* Video card */
+    .video-card {
+      flex: 1; min-height: 0;
+      background: #060709;
+      border-radius: var(--radius-lg);
+      overflow: hidden; position: relative;
+      box-shadow: var(--shadow-md);
+    }
+
+    /* Simulated camera feed */
+    .cam-feed {
+      position: absolute; inset: 0;
+      background:
+        radial-gradient(ellipse 70% 80% at 40% 55%, rgba(14,17,24,0.9) 0%, rgba(6,7,9,1) 80%);
+    }
+
+    .cam-grid {
+      position: absolute; inset: 0;
+      background-image:
+        linear-gradient(rgba(255,255,255,0.018) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.018) 1px, transparent 1px);
+      background-size: 60px 60px;
+    }
+
+    .cam-vignette {
+      position: absolute; inset: 0;
+      background: radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,0.65) 100%);
+    }
+
+    /* Simulated person silhouettes */
+    .silhouettes {
+      position: absolute; inset: 0;
+      opacity: 0.12;
+    }
+
+    /* Bounding boxes */
+    .bbox-layer { position: absolute; inset: 0; pointer-events: none; transition: opacity 0.2s; }
+    .bbox {
+      position: absolute;
+      border: 1.5px solid rgba(79,142,247,0.75);
+      border-radius: 2px;
+    }
+    .bbox-tag {
+      position: absolute; top: -18px; left: -1px;
+      background: rgba(79,142,247,0.85);
+      color: #fff; font-size: 9px; font-weight: 700;
+      padding: 1px 5px; border-radius: 2px;
+      white-space: nowrap; letter-spacing: 0.2px;
+    }
+
+    /* Top overlay */
+    .vid-top {
+      position: absolute; top: 0; left: 0; right: 0;
+      padding: 12px 14px;
+      display: flex; align-items: flex-start; justify-content: space-between;
+      background: linear-gradient(to bottom, rgba(0,0,0,0.65) 0%, transparent 100%);
+      pointer-events: none;
+    }
+    .live-badge {
+      background: var(--high);
+      color: #fff; font-size: 9px; font-weight: 700;
+      padding: 3px 7px; border-radius: var(--radius-sm);
+      letter-spacing: 1.2px; pointer-events: none;
+    }
+    .vid-ts {
+      font-size: 12px; color: rgba(255,255,255,0.7);
+      font-weight: 500; font-variant-numeric: tabular-nums;
+      letter-spacing: 0.2px;
+    }
+
+    /* PiP Map */
+    .pip-map {
+      position: absolute; bottom: 48px; right: 12px;
+      width: 116px; height: 76px;
+      background: var(--bg-surface);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: var(--radius-md);
+      overflow: hidden; cursor: pointer;
+      box-shadow: var(--shadow-md);
+      transition: transform 0.15s;
+    }
+    .pip-map:hover { transform: scale(1.04); }
+    .pip-map-bg {
+      position: absolute; inset: 0;
+      background:
+        linear-gradient(rgba(20,24,34,0.92), rgba(14,18,28,0.92)),
+        repeating-linear-gradient(0deg, transparent, transparent 9px, rgba(255,255,255,0.028) 9px, rgba(255,255,255,0.028) 10px),
+        repeating-linear-gradient(90deg, transparent, transparent 9px, rgba(255,255,255,0.028) 9px, rgba(255,255,255,0.028) 10px);
+    }
+    .pip-dot {
+      position: absolute; top: 44%; left: 53%;
+      width: 8px; height: 8px;
+      background: var(--accent); border: 2px solid #fff;
+      border-radius: 50%; box-shadow: 0 0 8px rgba(79,142,247,0.8);
+      transform: translate(-50%, -50%);
+    }
+    .pip-ring {
+      position: absolute; top: 44%; left: 53%;
+      width: 20px; height: 20px;
+      border: 1px solid rgba(79,142,247,0.3);
+      border-radius: 50%; transform: translate(-50%, -50%);
+    }
+    .pip-label {
+      position: absolute; bottom: 4px; left: 0; right: 0;
+      text-align: center; font-size: 8px;
+      color: rgba(255,255,255,0.4); font-weight: 500; letter-spacing: 0.3px;
+    }
+
+    /* Player controls bar */
+    .vid-controls {
+      position: absolute; bottom: 0; left: 0; right: 0;
+      padding: 8px 12px;
+      display: flex; align-items: center; gap: 6px;
+      background: linear-gradient(to top, rgba(0,0,0,0.72) 0%, transparent 100%);
+    }
+    .ptoggle {
+      display: inline-flex; align-items: center; gap: 4px;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: var(--radius-sm);
+      color: rgba(255,255,255,0.65);
+      font-size: 10px; font-weight: 600; font-family: var(--font);
+      padding: 4px 8px; cursor: pointer;
+      transition: background 0.12s, border-color 0.12s, color 0.12s;
+      letter-spacing: 0.2px;
+    }
+    .ptoggle svg { width: 11px; height: 11px; }
+    .ptoggle:hover { background: rgba(255,255,255,0.14); color: rgba(255,255,255,0.9); }
+    .ptoggle.on {
+      background: rgba(79,142,247,0.22);
+      border-color: rgba(79,142,247,0.45);
+      color: rgba(255,255,255,0.92);
+    }
+
+    /* Player audio meter (12 bars) */
+    .p-meter { display: flex; align-items: flex-end; gap: 2px; margin-left: auto; height: 18px; }
+    .p-meter-bar {
+      width: 3px; border-radius: 1px;
+      transition: height 0.08s ease, background 0.1s;
+    }
+
+    /* Offline overlay */
+    .offline-ov {
+      position: absolute; inset: 0;
+      background: rgba(0,0,0,0.82);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 10px;
+      backdrop-filter: blur(1px);
+    }
+    .offline-ov.hidden { display: none; }
+    .spin {
+      width: 28px; height: 28px;
+      border: 2px solid var(--border-strong);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.75s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .off-label { font-size: 13px; font-weight: 500; color: var(--text-secondary); }
+    .off-sub   { font-size: 11px; color: var(--text-muted); }
+
+    /* Scene summary */
+    .scene-strip {
+      flex-shrink: 0;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 9px 14px;
+      display: flex; align-items: center; gap: 9px;
+      min-height: 40px;
+    }
+    .scene-strip svg { width: 15px; height: 15px; color: var(--text-muted); flex-shrink: 0; }
+    .scene-txt { font-size: 12px; color: var(--text-secondary); font-weight: 400; line-height: 1.4; flex: 1; }
+    .scene-txt .hl { color: var(--text-primary); font-weight: 500; }
+    .scene-age { font-size: 10px; color: var(--text-muted); white-space: nowrap; }
+
+    /* ─── SIDEBAR ────────────────────────────────────────────────────── */
+    .sidebar {
+      flex: 0 0 30%;
+      display: flex; flex-direction: column;
+      padding: 10px 10px 10px 6px;
+      gap: 8px; overflow: hidden;
+      border-left: 1px solid var(--border-subtle);
+    }
+
+    .panel {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .panel-hd {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 9px 13px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .panel-title {
+      font-size: 10px; font-weight: 700; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.9px;
+    }
+    .panel-action {
+      font-size: 11px; color: var(--accent); font-weight: 500;
+      font-family: var(--font); background: none; border: none;
+      cursor: pointer; transition: color 0.12s;
+    }
+    .panel-action:hover { color: #6ba3ff; }
+    .panel-badge {
+      font-size: 10px; color: var(--text-muted); font-weight: 400;
+    }
+
+    /* ─── THREAT PANEL ───────────────────────────────────────────────── */
+    .threat-body { padding: 11px 13px; display: flex; flex-direction: column; gap: 9px; }
+
+    .score-row { display: flex; align-items: flex-end; gap: 10px; }
+    .t-score {
+      font-size: 46px; font-weight: 700; line-height: 1;
+      font-variant-numeric: tabular-nums; transition: color 0.4s;
+    }
+    .t-score.low      { color: var(--live); }
+    .t-score.guarded  { color: var(--text-primary); }
+    .t-score.elevated { color: var(--elevated); }
+    .t-score.high     { color: var(--high); }
+
+    .score-meta { display: flex; flex-direction: column; gap: 2px; padding-bottom: 5px; }
+    .t-level {
+      font-size: 13px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.5px; transition: color 0.4s;
+    }
+    .t-level.low      { color: var(--live); }
+    .t-level.guarded  { color: var(--text-primary); }
+    .t-level.elevated { color: var(--elevated); }
+    .t-level.high     { color: var(--high); }
+    .t-sub { font-size: 10px; color: var(--text-muted); }
+
+    /* Sparkline */
+    .spark-wrap { height: 26px; }
+    .spark-wrap svg { width: 100%; height: 100%; display: block; }
+
+    /* Chips */
+    .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+    .chip {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px 8px; border-radius: var(--radius-full);
+      font-size: 10px; font-weight: 600; border: 1px solid;
+      letter-spacing: 0.1px;
+    }
+    .chip-score { font-size: 9px; font-weight: 500; opacity: 0.7; }
+    .chip.hi  { background: rgba(239,68,68,0.1);  border-color: rgba(239,68,68,0.3);  color: #fca5a5; }
+    .chip.med { background: rgba(245,158,11,0.1); border-color: rgba(245,158,11,0.3); color: #fcd34d; }
+    .chip.lo  { background: var(--bg-elevated);   border-color: var(--border-subtle); color: var(--text-secondary); }
+
+    /* Why drawer */
+    .why-drawer {
+      background: var(--bg-elevated);
+      border-top: 1px solid var(--border-subtle);
+      padding: 9px 13px;
+      font-size: 11px; color: var(--text-secondary);
+      line-height: 1.55; display: none;
+    }
+    .why-drawer.open { display: block; animation: slide-down 0.18s ease; }
+    .why-drawer p { margin-bottom: 5px; }
+    .why-drawer p:last-child { margin-bottom: 0; }
+    .why-drawer strong { color: var(--text-primary); }
+
+    /* ─── AUDIO PANEL ────────────────────────────────────────────────── */
+    .audio-body { padding: 9px 13px; display: flex; flex-direction: column; gap: 7px; }
+
+    .meter-row { display: flex; align-items: center; gap: 8px; }
+    .meter-lbl { font-size: 10px; color: var(--text-muted); font-weight: 600; min-width: 32px; letter-spacing: 0.3px; }
+    .meter-track {
+      flex: 1; height: 4px;
+      background: var(--border-subtle); border-radius: var(--radius-full); overflow: hidden;
+    }
+    .meter-fill {
+      height: 100%; border-radius: var(--radius-full);
+      background: var(--live); transition: width 0.12s ease, background 0.2s;
+    }
+    .meter-fill.hot  { background: var(--elevated); }
+    .meter-fill.peak { background: var(--high); }
+    .meter-val { font-size: 10px; color: var(--text-muted); font-variant-numeric: tabular-nums; min-width: 24px; text-align: right; }
+
+    .cue-list { display: flex; flex-direction: column; gap: 3px; }
+    .cue-row { display: flex; align-items: center; gap: 7px; padding: 2px 0; }
+    .cue-name { font-size: 11px; color: var(--text-primary); font-weight: 500; flex: 1; }
+    .cue-bar { width: 52px; height: 3px; background: var(--border-subtle); border-radius: var(--radius-full); overflow: hidden; }
+    .cue-fill { height: 100%; border-radius: var(--radius-full); transition: width 0.3s; }
+    .cue-fill.hi  { background: var(--high); }
+    .cue-fill.med { background: var(--elevated); }
+    .cue-fill.lo  { background: var(--text-muted); }
+    .cue-score { font-size: 10px; color: var(--text-muted); font-variant-numeric: tabular-nums; min-width: 26px; text-align: right; }
+
+    .caption-box {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 6px 9px; font-size: 11px;
+      color: var(--text-secondary); font-style: italic;
+      min-height: 30px; line-height: 1.45;
+      transition: opacity 0.3s;
+    }
+    .caption-box .fresh { color: var(--text-primary); font-style: normal; }
+
+    /* ─── EVENT FEED ─────────────────────────────────────────────────── */
+    .feed-panel {
+      flex: 1; min-height: 0;
+      display: flex; flex-direction: column;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+
+    .feed-controls {
+      padding: 7px 10px 6px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex; flex-direction: column; gap: 5px;
+      flex-shrink: 0;
+    }
+    .feed-search {
+      display: flex; align-items: center; gap: 5px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm); padding: 5px 8px;
+    }
+    .feed-search svg { width: 11px; height: 11px; color: var(--text-muted); flex-shrink: 0; }
+    .feed-search input {
+      background: none; border: none; outline: none;
+      font-size: 11px; color: var(--text-primary); font-family: var(--font);
+      width: 100%;
+    }
+    .feed-search input::placeholder { color: var(--text-muted); }
+
+    .feed-tabs { display: flex; gap: 2px; }
+    .feed-tab {
+      padding: 3px 8px; border-radius: var(--radius-sm);
+      font-size: 10px; font-weight: 600; font-family: var(--font);
+      cursor: pointer; border: 1px solid transparent;
+      background: transparent; color: var(--text-muted);
+      transition: background 0.1s, color 0.1s, border-color 0.1s;
+      letter-spacing: 0.1px;
+    }
+    .feed-tab:hover { color: var(--text-secondary); background: var(--bg-elevated); }
+    .feed-tab.active {
+      background: var(--bg-elevated);
+      border-color: var(--border-subtle);
+      color: var(--text-primary);
+    }
+
+    .feed-list {
+      flex: 1; overflow-y: auto; padding: 4px 0;
+      scroll-behavior: smooth;
+    }
+    .feed-list::-webkit-scrollbar { width: 3px; }
+    .feed-list::-webkit-scrollbar-track { background: transparent; }
+    .feed-list::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+
+    .feed-item {
+      display: flex; align-items: flex-start; gap: 7px;
+      padding: 4px 12px; cursor: pointer;
+      transition: background 0.08s;
+      animation: fi-in 0.18s ease;
+    }
+    @keyframes fi-in {
+      from { opacity: 0; transform: translateY(-3px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .feed-item:hover { background: var(--bg-elevated); }
+
+    .fi-icon { width: 14px; height: 14px; flex-shrink: 0; margin-top: 2px; }
+    .fi-icon.audio  { color: var(--elevated); }
+    .fi-icon.video  { color: var(--accent); }
+    .fi-icon.risk   { color: var(--high); }
+    .fi-icon.system { color: var(--text-muted); }
+    .fi-icon.user   { color: var(--safe); }
+
+    .fi-body { flex: 1; min-width: 0; }
+    .fi-time { font-size: 9px; color: var(--text-muted); font-variant-numeric: tabular-nums; font-weight: 600; }
+    .fi-text { font-size: 11px; color: var(--text-secondary); line-height: 1.35; }
+    .fi-text .lbl  { color: var(--text-primary); font-weight: 500; }
+    .fi-text .sc   { color: var(--text-muted); }
+    .fi-text .esc  { color: var(--high); font-weight: 600; }
+
+    /* ─── ESCALATE MODAL ─────────────────────────────────────────────── */
+    .modal-bg {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.72);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 200; backdrop-filter: blur(3px);
+      animation: fade-in 0.15s ease;
+    }
+    .modal-bg.hidden { display: none; }
+    @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+    .modal {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-lg);
+      width: 460px; max-width: 92vw;
+      box-shadow: var(--shadow-lg);
+      animation: modal-rise 0.18s ease;
+    }
+    @keyframes modal-rise {
+      from { opacity: 0; transform: translateY(10px) scale(0.97); }
+      to   { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    .modal-hd {
+      padding: 15px 18px 12px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex; align-items: center; gap: 10px;
+    }
+    .modal-hd-icon {
+      width: 30px; height: 30px;
+      background: rgba(239,68,68,0.14);
+      border-radius: var(--radius-md);
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    }
+    .modal-title  { font-size: 14px; font-weight: 600; }
+    .modal-sub    { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+
+    .modal-body { padding: 13px 18px; display: flex; flex-direction: column; gap: 10px; }
+
+    .modal-score-row {
+      display: flex; align-items: center; gap: 12px;
+      background: var(--bg-elevated); border-radius: var(--radius-md); padding: 9px 13px;
+    }
+    .modal-big-score { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--high); }
+    .modal-score-info { display: flex; flex-direction: column; gap: 2px; }
+    .modal-score-lbl  { font-size: 12px; font-weight: 600; color: var(--high); }
+    .modal-score-why  { font-size: 11px; color: var(--text-secondary); }
+
+    .modal-thumbs { display: flex; gap: 5px; }
+    .modal-thumb-lbl { font-size: 10px; color: var(--text-muted); font-weight: 600; letter-spacing: 0.3px; margin-bottom: 5px; }
+    .m-thumb {
+      flex: 1; aspect-ratio: 16/9;
+      background: var(--bg-base); border-radius: var(--radius-sm);
+      border: 1px solid var(--border-subtle); overflow: hidden; position: relative;
+    }
+    .m-thumb-inner { width: 100%; height: 100%; }
+    .m-thumb-ts {
+      position: absolute; bottom: 3px; right: 4px;
+      font-size: 8px; color: rgba(255,255,255,0.5); font-weight: 600;
+    }
+
+    .modal-warn {
+      display: flex; align-items: flex-start; gap: 8px;
+      background: rgba(239,68,68,0.05);
+      border: 1px solid rgba(239,68,68,0.18);
+      border-radius: var(--radius-md); padding: 9px 11px;
+    }
+    .modal-warn svg { width: 13px; height: 13px; color: var(--high); flex-shrink: 0; margin-top: 1px; }
+    .modal-warn-txt { font-size: 11px; color: var(--text-secondary); line-height: 1.45; }
+    .modal-warn-txt strong { color: var(--text-primary); }
+
+    .modal-ft {
+      padding: 10px 18px 14px;
+      border-top: 1px solid var(--border-subtle);
+      display: flex; gap: 7px; justify-content: flex-end;
+    }
+    .btn-cancel { background: transparent; border: 1px solid var(--border-subtle); color: var(--text-secondary); }
+    .btn-cancel:hover { background: var(--bg-elevated); color: var(--text-primary); }
+    .btn-esc-confirm {
+      background: var(--high); border: 1px solid var(--high); color: #fff; font-weight: 600;
+    }
+    .btn-esc-confirm:hover { background: #dc2626; border-color: #dc2626; }
+
+    /* ─── DEMO SWITCHER ──────────────────────────────────────────────── */
+    .demo-bar {
+      position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%);
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-full);
+      padding: 5px 10px;
+      display: flex; align-items: center; gap: 6px;
+      z-index: 300; box-shadow: var(--shadow-md);
+    }
+    .demo-lbl { font-size: 10px; color: var(--text-muted); font-weight: 600; letter-spacing: 0.4px; padding: 0 2px; }
+    .demo-btn {
+      padding: 3px 10px; border-radius: var(--radius-full);
+      font-size: 10px; font-weight: 600; font-family: var(--font);
+      cursor: pointer; border: 1px solid var(--border-subtle);
+      background: transparent; color: var(--text-secondary);
+      transition: background 0.12s, color 0.12s;
+    }
+    .demo-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+    .demo-btn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+    /* ─── RESPONSIVE ─────────────────────────────────────────────────── */
+    @media (max-width: 1024px) {
+      .main { flex-direction: column; overflow-y: auto; }
+      .player-col { flex: none; height: 60vh; padding: 8px; }
+      .sidebar { flex: none; height: 380px; flex-direction: row; padding: 0 8px 8px; gap: 6px; border-left: none; border-top: 1px solid var(--border-subtle); overflow-x: auto; }
+      .panel { flex-shrink: 0; width: 260px; }
+      .feed-panel { width: 280px; }
+      .tb-right .btn .btn-txt { display: none; }
+    }
+    @media (max-width: 700px) {
+      .topbar { padding: 0 10px; gap: 8px; }
+      .logo-copy .logo-env { display: none; }
+      .conn-latency { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ══════════════════════ TOP BAR ══════════════════════ -->
+<header class="topbar" role="banner">
+  <div class="tb-left">
+    <div class="logo-mark" aria-hidden="true">
+      <!-- Shield icon -->
+      <svg viewBox="0 0 24 24"><path d="M12 2 3 7v6c0 5.25 3.75 10.15 9 11.25C17.25 23.15 21 18.25 21 13V7z"/></svg>
+    </div>
+    <div class="logo-copy">
+      <div class="logo-name">Responder Monitor</div>
+      <div class="logo-env">Unit 12 · Field</div>
+    </div>
+  </div>
+
+  <div class="tb-center" role="status" aria-label="Stream connection status">
+    <div class="conn-pill">
+      <div class="conn-dot" id="connDot" aria-hidden="true"></div>
+      <span class="conn-live" id="connLabel">LIVE</span>
+      <span class="conn-latency" id="connLatency">· 240ms</span>
+    </div>
+  </div>
+
+  <div class="tb-right" role="toolbar" aria-label="Primary actions">
+    <button class="btn btn-safe" id="btnSafe" title="Mark the current scene as safe. Logs an operator note." onclick="markSafe()">
+      <svg fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+      <span class="btn-txt">Mark Safe</span>
+    </button>
+    <button class="btn btn-escalate" id="btnEsc" title="Escalate incident — requires confirmation." onclick="openModal()">
+      <svg fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      <span class="btn-txt">Escalate</span>
+    </button>
+    <button class="btn btn-ghost" id="btnMute" title="Mute audio output" onclick="toggleMute()">
+      <svg id="muteIcon" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+      <span class="btn-txt" id="muteLabel">Mute</span>
+    </button>
+    <button class="btn btn-ghost" id="btnClip" title="Save last 30 seconds as a clip. Does not interrupt stream." onclick="recordClip()">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="15" rx="2"/><polyline points="17 2 12 7 7 2"/></svg>
+      <span class="btn-txt">Record Clip</span>
+    </button>
+    <button class="btn btn-ghost" title="Configure alerts, audio thresholds, and display.">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      <span class="btn-txt">Settings</span>
+    </button>
+  </div>
+</header>
+
+<!-- ══════════════════ ALERT BANNER ══════════════════════ -->
+<div class="alert-banner hidden" id="alertBanner" role="alert" aria-live="assertive">
+  <div class="alert-dot" aria-hidden="true"></div>
+  <span id="alertText">High threat detected — review and escalate if needed.</span>
+  <button class="alert-dismiss" onclick="dismissAlert()" aria-label="Dismiss alert">✕</button>
+</div>
+
+<!-- ══════════════════ MAIN CONTENT ══════════════════════ -->
+<main class="main" role="main">
+
+  <!-- ── PLAYER COLUMN ── -->
+  <section class="player-col" aria-label="Live video">
+
+    <!-- VIDEO CARD -->
+    <div class="video-card" role="region" aria-label="Camera feed">
+      <!-- Simulated camera feed -->
+      <div class="cam-feed">
+        <div class="cam-grid" aria-hidden="true"></div>
+
+        <!-- Stylized figure silhouettes -->
+        <svg class="silhouettes" viewBox="0 0 800 450" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+          <!-- Person 1 -->
+          <g transform="translate(240,100)" fill="rgba(200,210,230,0.9)">
+            <ellipse cx="0" cy="0" rx="14" ry="18"/>
+            <rect x="-18" y="20" width="36" height="70" rx="8"/>
+            <rect x="-26" y="26" width="14" height="48" rx="7"/>
+            <rect x="12" y="26" width="14" height="48" rx="7"/>
+            <rect x="-12" y="90" width="11" height="42" rx="5"/>
+            <rect x="1" y="90" width="11" height="42" rx="5"/>
+          </g>
+          <!-- Person 2 -->
+          <g transform="translate(390,95)" fill="rgba(180,190,215,0.85)">
+            <ellipse cx="0" cy="0" rx="13" ry="17"/>
+            <rect x="-16" y="19" width="32" height="65" rx="7"/>
+            <rect x="-23" y="24" width="13" height="44" rx="6"/>
+            <rect x="10" y="24" width="13" height="44" rx="6"/>
+            <rect x="-11" y="84" width="10" height="40" rx="5"/>
+            <rect x="1" y="84" width="10" height="40" rx="5"/>
+          </g>
+          <!-- Person 3 (partially behind) -->
+          <g transform="translate(530,108)" fill="rgba(160,170,200,0.75)">
+            <ellipse cx="0" cy="0" rx="12" ry="16"/>
+            <rect x="-15" y="18" width="30" height="60" rx="7"/>
+            <rect x="-21" y="22" width="12" height="40" rx="6"/>
+            <rect x="9" y="22" width="12" height="40" rx="6"/>
+            <rect x="-10" y="78" width="9" height="36" rx="5"/>
+            <rect x="1" y="78" width="9" height="36" rx="5"/>
+          </g>
+        </svg>
+
+        <div class="cam-vignette" aria-hidden="true"></div>
+      </div>
+
+      <!-- Bounding box layer -->
+      <div class="bbox-layer" id="bboxLayer" aria-hidden="true">
+        <div class="bbox" style="left:26%;top:19%;width:10%;height:44%">
+          <div class="bbox-tag">Person · 0.94</div>
+        </div>
+        <div class="bbox" style="left:44%;top:18%;width:9%;height:40%">
+          <div class="bbox-tag">Person · 0.89</div>
+        </div>
+        <div class="bbox" style="left:61%;top:21%;width:9%;height:36%">
+          <div class="bbox-tag">Person · 0.77</div>
+        </div>
+      </div>
+
+      <!-- Top overlay: badge + timestamp -->
+      <div class="vid-top">
+        <span class="live-badge" id="liveBadge" aria-label="Live stream">LIVE</span>
+        <time class="vid-ts" id="vidTs" aria-live="off">19:41:22</time>
+      </div>
+
+      <!-- PiP map -->
+      <div class="pip-map" role="img" aria-label="Location: Main Corridor, Building C" title="Map location — Main Corridor · Bldg C">
+        <div class="pip-map-bg"></div>
+        <div class="pip-ring" aria-hidden="true"></div>
+        <div class="pip-dot"  aria-hidden="true"></div>
+        <div class="pip-label">Main Corridor · Bldg C</div>
+      </div>
+
+      <!-- Player controls bar -->
+      <div class="vid-controls" role="toolbar" aria-label="Player controls">
+        <button class="ptoggle on" id="togCC" onclick="toggle('cc')" aria-pressed="true" title="Toggle speech captions">
+          <svg fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M7 12h4M15 12h2M7 15h2M13 15h4"/></svg>
+          CC
+        </button>
+        <button class="ptoggle on" id="togBB" onclick="toggle('bb')" aria-pressed="true" title="Toggle person detection overlay">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+          Boxes
+        </button>
+        <button class="ptoggle on" id="togMeter" onclick="toggle('meter')" aria-pressed="true" title="Toggle audio level indicator">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+          Meter
+        </button>
+
+        <!-- 12-bar audio meter -->
+        <div class="p-meter" id="pMeter" role="meter" aria-label="Audio level" aria-valuenow="72" aria-valuemin="0" aria-valuemax="100"></div>
+      </div>
+
+      <!-- Offline overlay -->
+      <div class="offline-ov hidden" id="offlineOv" role="status" aria-live="polite">
+        <div class="spin" aria-hidden="true"></div>
+        <div class="off-label">Reconnecting…</div>
+        <div class="off-sub" id="offSub">Attempting to restore stream feed</div>
+      </div>
+    </div><!-- /video-card -->
+
+    <!-- Scene summary strip -->
+    <div class="scene-strip" role="status" aria-live="polite" aria-label="Scene summary">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <p class="scene-txt" id="sceneTxt">
+        <span class="hl">Raised voices detected.</span> 3 people in view. Motion elevated.
+      </p>
+      <span class="scene-age" id="sceneAge">0s ago</span>
+    </div>
+  </section><!-- /player-col -->
+
+  <!-- ── SIDEBAR ── -->
+  <aside class="sidebar" role="complementary" aria-label="Monitoring panels">
+
+    <!-- THREAT PANEL -->
+    <div class="panel" id="threatPanel" role="region" aria-label="Threat level">
+      <div class="panel-hd">
+        <h2 class="panel-title">Threat Level</h2>
+        <button class="panel-action" id="whyBtn" onclick="toggleWhy()" aria-expanded="false">Why this?</button>
+      </div>
+      <div class="threat-body">
+        <div class="score-row">
+          <div class="t-score elevated" id="tScore" aria-label="Threat score 62 out of 100">62</div>
+          <div class="score-meta">
+            <div class="t-level elevated" id="tLevel">Elevated</div>
+            <div class="t-sub" id="tSub">Monitoring closely</div>
+          </div>
+        </div>
+
+        <!-- Sparkline: last 60s -->
+        <div class="spark-wrap" role="img" aria-label="Threat score trend — last 60 seconds">
+          <svg id="sparkSvg" viewBox="0 0 200 26" preserveAspectRatio="none"></svg>
+        </div>
+
+        <!-- Trigger chips -->
+        <div class="chips" id="chipSet" aria-label="Active threat indicators" role="list"></div>
+
+        <!-- Why link -->
+        <button class="panel-action" style="font-size:11px;text-align:left;padding:0;" onclick="toggleWhy()" aria-label="Explain threat score">Why this?</button>
+      </div>
+      <!-- Explanation drawer -->
+      <div class="why-drawer" id="whyDrawer" role="region" aria-label="Threat explanation">
+        <p><strong>Screaming (0.81)</strong> — Sustained high-frequency vocal distress above 85 dB for 4+ seconds.</p>
+        <p><strong>Fast Motion (0.74)</strong> — Object velocity exceeds 2 m/s across 3 detected persons.</p>
+        <p><strong>Glass Break (0.64)</strong> — Transient broadband noise at ~5 kHz consistent with glass fracture. Below standalone escalation threshold.</p>
+      </div>
+    </div><!-- /threat panel -->
+
+    <!-- AUDIO PANEL -->
+    <div class="panel" role="region" aria-label="Audio monitoring">
+      <div class="panel-hd">
+        <h2 class="panel-title">Audio</h2>
+        <span class="panel-badge" id="audioStatusLabel" style="color:var(--elevated)">Hot</span>
+      </div>
+      <div class="audio-body">
+        <div class="meter-row">
+          <span class="meter-lbl" aria-hidden="true">Level</span>
+          <div class="meter-track" role="meter" aria-label="Audio level" aria-valuenow="72" aria-valuemin="0" aria-valuemax="100">
+            <div class="meter-fill hot" id="audioFill" style="width:72%"></div>
+          </div>
+          <span class="meter-val" id="audioVal">72</span>
+        </div>
+
+        <div class="cue-list" id="cueList" aria-label="Detected audio events" role="list"></div>
+
+        <div class="caption-box" role="log" aria-live="polite" aria-label="Transcribed speech" id="captionBox">
+          <span class="fresh" id="captionText">"…get away from me, stop—"</span>
+        </div>
+      </div>
+    </div><!-- /audio panel -->
+
+    <!-- EVENT FEED -->
+    <div class="feed-panel" role="region" aria-label="Live event feed">
+      <div class="panel-hd">
+        <h2 class="panel-title">Live Feed</h2>
+        <span class="panel-badge" id="feedCount">0 events</span>
+      </div>
+      <div class="feed-controls">
+        <div class="feed-search" role="search">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="search" id="feedSearch" placeholder="Search events…" aria-label="Filter event feed" oninput="renderFeed()">
+        </div>
+        <div class="feed-tabs" role="tablist" aria-label="Filter by event type">
+          <button class="feed-tab active" role="tab" aria-selected="true"  data-f="all"    onclick="setFilter('all',this)">All</button>
+          <button class="feed-tab"        role="tab" aria-selected="false" data-f="audio"  onclick="setFilter('audio',this)">Audio</button>
+          <button class="feed-tab"        role="tab" aria-selected="false" data-f="video"  onclick="setFilter('video',this)">Video</button>
+          <button class="feed-tab"        role="tab" aria-selected="false" data-f="system" onclick="setFilter('system',this)">System</button>
+          <button class="feed-tab"        role="tab" aria-selected="false" data-f="user"   onclick="setFilter('user',this)">User</button>
+        </div>
+      </div>
+      <div class="feed-list" id="feedList" role="log" aria-live="polite" aria-label="Event log"></div>
+    </div><!-- /feed panel -->
+
+  </aside><!-- /sidebar -->
+</main><!-- /main -->
+
+<!-- ══════════════════ ESCALATE MODAL ══════════════════ -->
+<div class="modal-bg hidden" id="escalateModal" role="dialog" aria-modal="true" aria-labelledby="modalTitle" onclick="handleModalBgClick(event)">
+  <div class="modal">
+    <div class="modal-hd">
+      <div class="modal-hd-icon" aria-hidden="true">
+        <svg width="16" height="16" fill="none" stroke="#ef4444" stroke-width="2.5" viewBox="0 0 24 24"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      </div>
+      <div>
+        <div class="modal-title" id="modalTitle">Escalate Incident</div>
+        <div class="modal-sub">Review before escalating. This notifies dispatch immediately.</div>
+      </div>
+    </div>
+    <div class="modal-body">
+      <!-- Risk summary -->
+      <div class="modal-score-row">
+        <div class="modal-big-score" id="mScore">62</div>
+        <div class="modal-score-info">
+          <div class="modal-score-lbl" id="mLevel">Elevated — Monitoring closely</div>
+          <div class="modal-score-why" id="mWhy">Screaming (0.81) · Fast Motion (0.74) · Glass Break (0.64)</div>
+        </div>
+      </div>
+      <!-- Thumbnails -->
+      <div>
+        <div class="modal-thumb-lbl">LAST 10 SECONDS</div>
+        <div class="modal-thumbs">
+          <div class="m-thumb"><div class="m-thumb-inner" style="background:linear-gradient(135deg,#080a0e,#14161c)"></div><div class="m-thumb-ts">−10s</div></div>
+          <div class="m-thumb"><div class="m-thumb-inner" style="background:linear-gradient(135deg,#0b0d12,#181a22)"></div><div class="m-thumb-ts">−7s</div></div>
+          <div class="m-thumb"><div class="m-thumb-inner" style="background:linear-gradient(135deg,#090b10,#161820)"></div><div class="m-thumb-ts">−4s</div></div>
+          <div class="m-thumb"><div class="m-thumb-inner" style="background:linear-gradient(135deg,#0a0c12,#18191e)"></div><div class="m-thumb-ts">−1s</div></div>
+        </div>
+      </div>
+      <!-- Warning -->
+      <div class="modal-warn">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <p class="modal-warn-txt"><strong>A false escalation is logged and reviewed.</strong> Only escalate if the threat is real and immediate.</p>
+      </div>
+    </div>
+    <div class="modal-ft">
+      <button class="btn btn-cancel" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-esc-confirm" id="btnConfirmEsc" onclick="confirmEscalate()">
+        <svg fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" width="12" height="12"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+        Confirm Escalate
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════ DEMO SWITCHER ══════════════════ -->
+<nav class="demo-bar" aria-label="Demo state switcher">
+  <span class="demo-lbl">SCREEN</span>
+  <button class="demo-btn"    onclick="applyState('normal',this)">Normal</button>
+  <button class="demo-btn on" onclick="applyState('elevated',this)">Elevated</button>
+  <button class="demo-btn"    onclick="applyState('high',this)">High Threat</button>
+  <button class="demo-btn"    onclick="applyState('reconnecting',this)">Reconnecting</button>
+</nav>
+
+<script>
+/* ════════════════════════════════════════════════════════════
+   STATE DEFINITIONS
+════════════════════════════════════════════════════════════ */
+const STATES = {
+  normal: {
+    score:62, scoreChange:18, level:'Low', levelCls:'low', sub:'All clear',
+    chips:[
+      {l:'Background Noise',s:'0.21',c:'lo'},
+      {l:'Movement',s:'0.18',c:'lo'},
+    ],
+    scene:'<span class="hl">Scene quiet.</span> 2 people in view. Normal activity.',
+    audioLevel:22, audioStatus:'Normal', audioStatusColor:'var(--live)', audioFillCls:'',
+    cues:[
+      {n:'Speech',s:'0.32',c:'lo'},
+      {n:'Footsteps',s:'0.22',c:'lo'},
+      {n:'Door',s:'0.08',c:'lo'},
+    ],
+    caption:'"…alright, just over here…"',
+    showBanner:false, escPulse:false, offline:false,
+    sparkColor:'var(--live)', sparkBase:20,
+  },
+  elevated: {
+    score:62, level:'Elevated', levelCls:'elevated', sub:'Monitoring closely',
+    chips:[
+      {l:'Screaming',s:'0.81',c:'hi'},
+      {l:'Fast Motion',s:'0.74',c:'hi'},
+      {l:'Glass Break',s:'0.64',c:'med'},
+      {l:'Siren',s:'0.12',c:'lo'},
+    ],
+    scene:'<span class="hl">Raised voices detected.</span> 3 people in view. Motion elevated.',
+    audioLevel:72, audioStatus:'Hot', audioStatusColor:'var(--elevated)', audioFillCls:'hot',
+    cues:[
+      {n:'Screaming',s:'0.81',c:'hi'},
+      {n:'Shouting',s:'0.62',c:'med'},
+      {n:'Siren',s:'0.12',c:'lo'},
+    ],
+    caption:'"…get away from me, stop—"',
+    showBanner:false, escPulse:false, offline:false,
+    sparkColor:'var(--elevated)', sparkBase:55,
+  },
+  high: {
+    score:89, level:'High', levelCls:'high', sub:'Immediate review required',
+    chips:[
+      {l:'Screaming',s:'0.94',c:'hi'},
+      {l:'Physical Contact',s:'0.88',c:'hi'},
+      {l:'Glass Break',s:'0.79',c:'hi'},
+      {l:'Fast Motion',s:'0.91',c:'hi'},
+    ],
+    scene:'<span class="hl" style="color:var(--high)">Physical altercation likely.</span> 3 people, contact detected. Screaming sustained.',
+    audioLevel:95, audioStatus:'Peak', audioStatusColor:'var(--high)', audioFillCls:'peak',
+    cues:[
+      {n:'Screaming',s:'0.94',c:'hi'},
+      {n:'Impact',s:'0.88',c:'hi'},
+      {n:'Glass Break',s:'0.79',c:'hi'},
+    ],
+    caption:'"—no! Help! Someone—"',
+    showBanner:true, escPulse:true, offline:false,
+    sparkColor:'var(--high)', sparkBase:82,
+  },
+  reconnecting: {
+    score:62, level:'Elevated', levelCls:'elevated', sub:'Last known — stream offline',
+    chips:[
+      {l:'Screaming',s:'0.81',c:'hi'},
+      {l:'Fast Motion',s:'0.74',c:'hi'},
+    ],
+    scene:'<span class="hl" style="color:var(--text-muted)">Stream disconnected.</span> Last known: raised voices, 3 persons.',
+    audioLevel:0, audioStatus:'Offline', audioStatusColor:'var(--text-muted)', audioFillCls:'',
+    cues:[
+      {n:'Screaming',s:'—',c:'lo'},
+      {n:'Shouting',s:'—',c:'lo'},
+    ],
+    caption:'(Stream interrupted)',
+    showBanner:false, escPulse:false, offline:true,
+    sparkColor:'var(--elevated)', sparkBase:55,
+  },
+};
+
+/* ════════════════════════════════════════════════════════════
+   APP STATE
+════════════════════════════════════════════════════════════ */
+let currentState = 'elevated';
+let filterMode   = 'all';
+let isMuted      = false;
+let toggles      = { cc: true, bb: true, meter: true };
+let whyOpen      = false;
+let escLocked    = false;
+let eventCount   = 0;
+let sparkData    = [];
+let sceneAgeSec  = 0;
+let liveAudioLvl = 72;
+
+/* ════════════════════════════════════════════════════════════
+   EVENT FEED
+════════════════════════════════════════════════════════════ */
+const FEED_ICONS = {
+  audio:  `<svg class="fi-icon audio"  fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>`,
+  video:  `<svg class="fi-icon video"  fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>`,
+  risk:   `<svg class="fi-icon risk"   fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`,
+  system: `<svg class="fi-icon system" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>`,
+  user:   `<svg class="fi-icon user"   fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`,
+};
+
+const feedEvents = [
+  { time:'19:40:51', type:'system', text:'<span class="lbl">System:</span> Stream connected · Unit 12 · Field' },
+  { time:'19:40:55', type:'video',  text:'<span class="lbl">Video:</span> 2 persons detected' },
+  { time:'19:41:03', type:'audio',  text:'<span class="lbl">Audio:</span> "Speech" <span class="sc">(0.45)</span>' },
+  { time:'19:41:09', type:'audio',  text:'<span class="lbl">Audio:</span> "Screaming" <span class="sc">(0.81)</span>' },
+  { time:'19:41:10', type:'video',  text:'<span class="lbl">Video:</span> 3 persons detected, fast motion' },
+  { time:'19:41:11', type:'risk',   text:'<span class="lbl">Risk:</span> Elevated (62) — fast motion + screaming' },
+  { time:'19:41:13', type:'audio',  text:'<span class="lbl">Audio:</span> "Glass Break" <span class="sc">(0.64)</span>' },
+  { time:'19:41:16', type:'audio',  text:'<span class="lbl">Audio:</span> "Shouting" <span class="sc">(0.62)</span>' },
+  { time:'19:41:19', type:'video',  text:'<span class="lbl">Video:</span> Motion velocity +38% vs baseline' },
+  { time:'19:41:22', type:'risk',   text:'<span class="lbl">Risk:</span> Elevated (62) — sustained' },
+];
+
+function pushEvent(ev) {
+  feedEvents.push(ev);
+  eventCount++;
+  document.getElementById('feedCount').textContent = eventCount + ' events';
+  renderFeed();
+}
+
+function renderFeed() {
+  const q  = (document.getElementById('feedSearch').value || '').toLowerCase();
+  const ul = document.getElementById('feedList');
+  const scrolledToBottom = ul.scrollHeight - ul.scrollTop - ul.clientHeight < 60;
+
+  const filtered = feedEvents.filter(e => {
+    const typeOk  = filterMode === 'all' || e.type === filterMode;
+    const queryOk = !q || e.text.toLowerCase().includes(q) || e.time.includes(q);
+    return typeOk && queryOk;
+  });
+
+  ul.innerHTML = filtered.map(e => `
+    <div class="feed-item" title="Click to jump to this moment in buffer" role="article">
+      ${FEED_ICONS[e.type] || FEED_ICONS.system}
+      <div class="fi-body">
+        <div class="fi-time">${e.time}</div>
+        <div class="fi-text">${e.text}</div>
+      </div>
+    </div>
+  `).join('');
+
+  if (scrolledToBottom) ul.scrollTop = ul.scrollHeight;
+  document.getElementById('feedCount').textContent = feedEvents.length + ' events';
+}
+
+function setFilter(f, btn) {
+  filterMode = f;
+  document.querySelectorAll('.feed-tab').forEach(b => {
+    b.classList.toggle('active', b === btn);
+    b.setAttribute('aria-selected', b === btn ? 'true' : 'false');
+  });
+  renderFeed();
+}
+
+/* ════════════════════════════════════════════════════════════
+   SPARKLINE
+════════════════════════════════════════════════════════════ */
+function buildSparkData(base) {
+  const d = [];
+  for (let i = 0; i < 60; i++) {
+    const t = i / 59;
+    d.push(Math.max(0, Math.min(100, (base - 30) * t + Math.random() * 14 - 7 + 8)));
+  }
+  return d;
+}
+
+function drawSparkline(data, color) {
+  const svg = document.getElementById('sparkSvg');
+  const W = 200, H = 26;
+  const pts = data.map((v, i) => {
+    const x = (i / (data.length - 1)) * W;
+    const y = H - (v / 100) * H;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+
+  svg.innerHTML = `
+    <defs>
+      <linearGradient id="sg" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="${color}" stop-opacity="0.28"/>
+        <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
+      </linearGradient>
+    </defs>
+    <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5"
+      stroke-linecap="round" stroke-linejoin="round" opacity="0.85"/>
+    <polygon points="0,${H} ${pts} ${W},${H}" fill="url(#sg)"/>
+  `;
+}
+
+/* ════════════════════════════════════════════════════════════
+   PLAYER AUDIO METER (12 bars)
+════════════════════════════════════════════════════════════ */
+function drawPlayerMeter(level) {
+  const el = document.getElementById('pMeter');
+  if (!el) return;
+  let html = '';
+  const N = 12;
+  for (let i = 0; i < N; i++) {
+    const threshold = (i / N) * 100;
+    const active = level > threshold;
+    const h = 5 + (i / N) * 14;
+    const col = threshold > 88 ? 'var(--high)' : threshold > 68 ? 'var(--elevated)' : 'var(--live)';
+    html += `<div class="p-meter-bar" style="height:${h}px;background:${active ? col : 'rgba(255,255,255,0.08)'};opacity:${active ? 1 : 0.5}"></div>`;
+  }
+  el.innerHTML = html;
+  el.setAttribute('aria-valuenow', Math.round(level));
+}
+
+/* ════════════════════════════════════════════════════════════
+   APPLY STATE
+════════════════════════════════════════════════════════════ */
+function applyState(key, btn) {
+  currentState = key;
+  const s = STATES[key];
+
+  // Demo buttons
+  document.querySelectorAll('.demo-btn').forEach(b => b.classList.toggle('on', b === btn));
+
+  // Threat score
+  const tScore = document.getElementById('tScore');
+  tScore.textContent = s.score;
+  tScore.className = `t-score ${s.levelCls}`;
+  tScore.setAttribute('aria-label', `Threat score ${s.score} out of 100`);
+
+  const tLevel = document.getElementById('tLevel');
+  tLevel.textContent = s.level;
+  tLevel.className = `t-level ${s.levelCls}`;
+
+  document.getElementById('tSub').textContent = s.sub;
+
+  // Modal sync
+  document.getElementById('mScore').textContent  = s.score;
+  document.getElementById('mLevel').textContent  = `${s.level} — ${s.sub}`;
+  document.getElementById('mWhy').textContent    = s.chips.map(c=>`${c.l} (${c.s})`).join(' · ');
+
+  // Chips
+  document.getElementById('chipSet').innerHTML = s.chips.map(c =>
+    `<span class="chip ${c.c}" role="listitem">${c.l}<span class="chip-score">${c.s}</span></span>`
+  ).join('');
+
+  // Scene
+  document.getElementById('sceneTxt').innerHTML = s.scene;
+  sceneAgeSec = 0;
+
+  // Audio
+  const fill = document.getElementById('audioFill');
+  fill.style.width = s.audioLevel + '%';
+  fill.className   = 'meter-fill ' + s.audioFillCls;
+  fill.closest('[role=meter]').setAttribute('aria-valuenow', s.audioLevel);
+  document.getElementById('audioVal').textContent = s.audioLevel || '—';
+  const lbl = document.getElementById('audioStatusLabel');
+  lbl.textContent   = s.audioStatus;
+  lbl.style.color   = s.audioStatusColor;
+  liveAudioLvl = s.audioLevel;
+
+  // Cues
+  document.getElementById('cueList').innerHTML = s.cues.map(c => `
+    <div class="cue-row" role="listitem">
+      <span class="cue-name">${c.n}</span>
+      <div class="cue-bar" aria-hidden="true">
+        <div class="cue-fill ${c.c}" style="width:${parseFloat(c.s)*100||0}%"></div>
+      </div>
+      <span class="cue-score">${c.s}</span>
+    </div>
+  `).join('');
+
+  // Caption
+  document.getElementById('captionText').textContent = s.caption;
+
+  // Alert banner
+  const banner = document.getElementById('alertBanner');
+  banner.classList.toggle('hidden', !s.showBanner);
+
+  // Escalate button pulse
+  if (!escLocked) {
+    const esc = document.getElementById('btnEsc');
+    esc.classList.toggle('pulsing', s.escPulse);
+  }
+
+  // Offline overlay
+  const offline = document.getElementById('offlineOv');
+  offline.classList.toggle('hidden', !s.offline);
+
+  // Connection indicators
+  const dot   = document.getElementById('connDot');
+  const label = document.getElementById('connLabel');
+  const lat   = document.getElementById('connLatency');
+  const badge = document.getElementById('liveBadge');
+  if (s.offline) {
+    dot.classList.add('off'); label.classList.add('off');
+    label.textContent = 'RECONNECTING'; lat.textContent = '· —';
+    badge.style.background = 'var(--text-muted)';
+  } else {
+    dot.classList.remove('off'); label.classList.remove('off');
+    label.textContent = 'LIVE'; lat.textContent = '· 240ms';
+    badge.style.background = '';
+  }
+
+  // Sparkline
+  sparkData = buildSparkData(s.sparkBase);
+  drawSparkline(sparkData, s.sparkColor);
+
+  // Player meter
+  drawPlayerMeter(s.audioLevel);
+
+  // Feed event for state change
+  if (key === 'reconnecting') {
+    const t = nowTs();
+    pushEvent({ time: t, type: 'system', text: '<span class="lbl">System:</span> Stream disconnected — attempting reconnect' });
+  }
+  if (key === 'high') {
+    const t = nowTs();
+    pushEvent({ time: t, type: 'risk', text: '<span class="lbl">Risk:</span> High (89) — physical altercation likely' });
+  }
+}
+
+/* ════════════════════════════════════════════════════════════
+   ACTIONS
+════════════════════════════════════════════════════════════ */
+function markSafe() {
+  const t = nowTs();
+  pushEvent({ time: t, type: 'user', text: '<span class="lbl">Operator:</span> Scene marked safe' });
+  dismissAlert();
+  const btn = document.getElementById('btnSafe');
+  btn.innerHTML = `<svg fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" width="12" height="12"><polyline points="20 6 9 17 4 12"/></svg><span class="btn-txt">Marked Safe</span>`;
+  btn.style.background = 'rgba(22,163,74,0.12)';
+  setTimeout(() => {
+    btn.innerHTML = `<svg fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg><span class="btn-txt">Mark Safe</span>`;
+    btn.style.background = '';
+  }, 3500);
+}
+
+function openModal() {
+  if (escLocked) return;
+  document.getElementById('escalateModal').classList.remove('hidden');
+  document.getElementById('btnConfirmEsc').disabled = false;
+  document.getElementById('btnConfirmEsc').textContent = 'Confirm Escalate';
+  document.getElementById('btnConfirmEsc').innerHTML = `
+    <svg fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" width="12" height="12"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+    Confirm Escalate
+  `;
+}
+
+function closeModal() {
+  document.getElementById('escalateModal').classList.add('hidden');
+}
+
+function handleModalBgClick(e) {
+  if (e.target.id === 'escalateModal') closeModal();
+}
+
+function confirmEscalate() {
+  const btn = document.getElementById('btnConfirmEsc');
+  btn.textContent = 'Escalating…';
+  btn.disabled = true;
+
+  setTimeout(() => {
+    closeModal();
+    escLocked = true;
+    const esc = document.getElementById('btnEsc');
+    esc.textContent = 'Escalated';
+    esc.classList.add('locked');
+    esc.classList.remove('pulsing');
+    esc.disabled = true;
+
+    const t = nowTs();
+    const score = document.getElementById('tScore').textContent;
+    pushEvent({ time: t, type: 'risk', text: `<span class="esc lbl">ESCALATED</span> — Dispatch notified. Score: ${score}` });
+  }, 1100);
+}
+
+function recordClip() {
+  const btn = document.getElementById('btnClip');
+  btn.innerHTML = `<svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="15" rx="2"/><polyline points="17 2 12 7 7 2"/></svg><span class="btn-txt">Saving…</span>`;
+  setTimeout(() => {
+    btn.innerHTML = `<svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="15" rx="2"/><polyline points="17 2 12 7 7 2"/></svg><span class="btn-txt">Record Clip</span>`;
+    const id = Date.now().toString(36).toUpperCase();
+    pushEvent({ time: nowTs(), type: 'system', text: `<span class="lbl">Clip saved</span> — Last 30s · clip_${id}.mp4` });
+  }, 1400);
+}
+
+function toggleMute() {
+  isMuted = !isMuted;
+  const btn = document.getElementById('btnMute');
+  const lbl = document.getElementById('muteLabel');
+  const ico = document.getElementById('muteIcon');
+  if (isMuted) {
+    ico.innerHTML = `<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>`;
+    lbl.textContent = 'Unmute';
+    btn.style.color = 'var(--elevated)';
+  } else {
+    ico.innerHTML = `<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/>`;
+    lbl.textContent = 'Mute';
+    btn.style.color = '';
+  }
+}
+
+function toggle(key) {
+  toggles[key] = !toggles[key];
+  const on = toggles[key];
+  if (key === 'cc') {
+    document.getElementById('togCC').classList.toggle('on', on);
+    document.getElementById('togCC').setAttribute('aria-pressed', on);
+  }
+  if (key === 'bb') {
+    document.getElementById('togBB').classList.toggle('on', on);
+    document.getElementById('togBB').setAttribute('aria-pressed', on);
+    document.getElementById('bboxLayer').style.opacity = on ? '1' : '0';
+  }
+  if (key === 'meter') {
+    document.getElementById('togMeter').classList.toggle('on', on);
+    document.getElementById('togMeter').setAttribute('aria-pressed', on);
+    document.getElementById('pMeter').style.opacity = on ? '1' : '0';
+  }
+}
+
+function toggleWhy() {
+  whyOpen = !whyOpen;
+  document.getElementById('whyDrawer').classList.toggle('open', whyOpen);
+  const btns = document.querySelectorAll('#whyBtn, .panel-action');
+  btns.forEach(b => { if (b.textContent.trim().startsWith('Why') || b.textContent.trim().startsWith('Close')) {
+    b.textContent = whyOpen ? 'Close' : 'Why this?';
+    b.setAttribute('aria-expanded', whyOpen);
+  }});
+}
+
+function dismissAlert() {
+  document.getElementById('alertBanner').classList.add('hidden');
+}
+
+/* ════════════════════════════════════════════════════════════
+   CLOCKS & LIVE UPDATES
+════════════════════════════════════════════════════════════ */
+function nowTs() {
+  return new Date().toLocaleTimeString('en-US', { hour12: false });
+}
+
+function tickClock() {
+  document.getElementById('vidTs').textContent = nowTs();
+}
+
+function tickScene() {
+  sceneAgeSec++;
+  const el = document.getElementById('sceneAge');
+  if (sceneAgeSec < 60) el.textContent = `${sceneAgeSec}s ago`;
+  else el.textContent = `${Math.floor(sceneAgeSec / 60)}m ago`;
+}
+
+/* Live event simulation */
+const LIVE_EVENTS = [
+  { type:'audio', txt: () => `<span class="lbl">Audio:</span> "Screaming" <span class="sc">(${rnd(0.78,0.94)})</span>` },
+  { type:'audio', txt: () => `<span class="lbl">Audio:</span> "Shouting" <span class="sc">(${rnd(0.55,0.70)})</span>` },
+  { type:'video', txt: () => `<span class="lbl">Video:</span> 3 persons, motion +${Math.floor(Math.random()*25+30)}% vs baseline` },
+  { type:'risk',  txt: () => `<span class="lbl">Risk:</span> ${STATES[currentState].level} (${STATES[currentState].score + Math.floor(Math.random()*6-3)}) — sustained` },
+  { type:'audio', txt: () => `<span class="lbl">Audio:</span> "Impact" <span class="sc">(${rnd(0.60,0.85)})</span>` },
+];
+
+function rnd(a, b) { return (Math.random() * (b - a) + a).toFixed(2); }
+
+function liveTick() {
+  if (currentState === 'reconnecting') return;
+
+  // Random event
+  if (Math.random() < 0.65) {
+    const ev = LIVE_EVENTS[Math.floor(Math.random() * LIVE_EVENTS.length)];
+    pushEvent({ time: nowTs(), type: ev.type, text: ev.txt() });
+  }
+
+  // Animate sparkline
+  const s = STATES[currentState];
+  sparkData.push(Math.max(0, Math.min(100, s.sparkBase + (Math.random() * 14 - 7))));
+  if (sparkData.length > 60) sparkData.shift();
+  drawSparkline(sparkData, s.sparkColor);
+
+  // Animate audio meter
+  const variation = (Math.random() - 0.45) * 18;
+  liveAudioLvl = Math.max(0, Math.min(100, s.audioLevel + (Math.random() * 16 - 8) + variation * 0.3));
+  const fill = document.getElementById('audioFill');
+  fill.style.width = liveAudioLvl + '%';
+  document.getElementById('audioVal').textContent = Math.round(liveAudioLvl);
+  drawPlayerMeter(liveAudioLvl);
+}
+
+/* ════════════════════════════════════════════════════════════
+   KEYBOARD SHORTCUTS
+════════════════════════════════════════════════════════════ */
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeModal();
+  if (e.key === 'e' && !e.target.matches('input')) openModal();
+  if (e.key === 's' && !e.target.matches('input')) markSafe();
+});
+
+/* ════════════════════════════════════════════════════════════
+   INIT
+════════════════════════════════════════════════════════════ */
+window.addEventListener('DOMContentLoaded', () => {
+  renderFeed();
+  applyState('elevated', document.querySelectorAll('.demo-btn')[1]);
+  setInterval(tickClock,  1000);
+  setInterval(tickScene,  1000);
+  setInterval(liveTick,   3200);
+  tickClock();
+});
+</script>
+</body>
+</html>
